@@ -1,0 +1,1084 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR-Alerta Chimbote - Ecosistema IoT y Sirena Remota</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- QRCode Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- MQTT.js library for real-world hardware communication -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #0b0f19;
+            color: #f8fafc;
+        }
+
+        /* Animaciones estroboscópicas para simular la sirena física activa en el poste */
+        @keyframes strobe-red {
+            0%, 100% { opacity: 0.1; transform: scale(0.98); }
+            50% { opacity: 1; transform: scale(1.05); filter: drop-shadow(0 0 20px rgba(239, 68, 68, 0.8)); }
+        }
+        @keyframes strobe-blue {
+            0%, 100% { opacity: 0.1; transform: scale(0.98); }
+            50% { opacity: 1; transform: scale(1.05); filter: drop-shadow(0 0 20px rgba(59, 130, 246, 0.8)); }
+        }
+        .animate-strobe-red {
+            animation: strobe-red 0.3s infinite;
+        }
+        .animate-strobe-blue {
+            animation: strobe-blue 0.3s infinite 0.15s;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-blue-600 selection:text-white">
+
+    <header class="bg-slate-900 border-b border-slate-800 py-4 px-6 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="bg-blue-600 p-2.5 rounded-xl text-white shadow-lg shadow-blue-900/30">
+                    <i data-lucide="cpu" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <h1 class="font-extrabold text-lg tracking-tight text-white flex items-center gap-2">
+                        QR-ALERTA <span class="text-blue-500">CHIMBOTE</span>
+                        <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">Ecosistema IoT</span>
+                    </h1>
+                    <p class="text-[11px] text-slate-400">Proyecto de Creatividad Empresarial (UTP Chimbote - 2026)</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <!-- Estado de sincronización IoT -->
+                <div id="cloud-status" class="flex items-center space-x-2 bg-slate-950 px-4 py-2 rounded-xl border border-slate-800 text-xs">
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span id="cloud-status-text" class="text-slate-300 font-medium">Buscando Broker IoT...</span>
+                </div>
+                
+                <button onclick="simularFlujoLocal()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow-md shadow-blue-900/20 active:scale-95">
+                    Forzar Vista Móvil
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 mt-6">
+        <div class="bg-slate-900/50 p-1.5 rounded-2xl border border-slate-800/80 flex flex-wrap gap-1">
+            <button onclick="cambiarPestana('simulador')" id="tab-simulador" class="flex-1 min-w-[120px] text-xs font-bold py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2 bg-blue-600 text-white shadow-md">
+                <i data-lucide="play" class="w-4 h-4"></i>
+                <span>1. Simulador IoT</span>
+            </button>
+            <button onclick="cambiarPestana('codigo')" id="tab-codigo" class="flex-1 min-w-[120px] text-xs font-bold py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50">
+                <i data-lucide="code-2" class="w-4 h-4"></i>
+                <span>2. Código ESP32 (Hardware)</span>
+            </button>
+            <button onclick="cambiarPestana('esquema')" id="tab-esquema" class="flex-1 min-w-[120px] text-xs font-bold py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50">
+                <i data-lucide="circuit-board" class="w-4 h-4"></i>
+                <span>3. Diagrama de Cableado</span>
+            </button>
+            <button onclick="cambiarPestana('despliegue')" id="tab-despliegue" class="flex-1 min-w-[120px] text-xs font-bold py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50">
+                <i data-lucide="globe" class="w-4 h-4"></i>
+                <span>4. Despliegue en Internet</span>
+            </button>
+        </div>
+    </div>
+
+    <main class="flex-grow max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+        
+        <!-- SECCIÓN 1: EL SIMULADOR INTERACTIVO IoT -->
+        <div id="section-simulador" class="space-y-8">
+            
+            <!-- VISTA DE CLIENTE MÓVIL (Se activa si se detecta ?view=mobile en la URL) -->
+            <div id="view-mobile" class="hidden max-w-md mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+                <div class="absolute top-0 right-0 bg-blue-500/10 text-blue-400 px-3 py-1 text-[10px] font-bold border-b border-l border-slate-800 rounded-bl-xl tracking-wider uppercase">
+                    Enlace QR Activo
+                </div>
+
+                <div class="space-y-6 pt-4">
+                    <div class="text-center space-y-2">
+                        <div class="flex justify-center">
+                            <div class="bg-blue-500/10 p-4 rounded-full border border-blue-500/20 relative">
+                                <i data-lucide="qr-code" class="w-10 h-10 text-blue-400"></i>
+                            </div>
+                        </div>
+                        <h2 class="text-xl font-black text-white">REPORTE INTEGRADO IoT</h2>
+                        <p class="text-xs text-slate-400">El escaneo vincula de forma segura tu celular con el poste físico de auxilio.</p>
+                    </div>
+
+                    <!-- Tarjeta de Ubicación y Reconocimiento de Poste -->
+                    <div class="bg-slate-950 p-5 rounded-2xl border-2 border-emerald-500/30 space-y-3 relative overflow-hidden">
+                        <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400 uppercase tracking-widest">
+                            <i data-lucide="locate-fixed" class="w-4 h-4 animate-pulse"></i>
+                            <span>📍 Ubicación Vinculada por QR</span>
+                        </div>
+                        
+                        <div class="bg-slate-900 p-3 rounded-xl border border-slate-800">
+                            <h3 id="mobile-detected-pole" class="font-extrabold text-white text-sm">Poste 042 - Av. Meiggs / Av. Pardo</h3>
+                            <p class="text-[11px] text-slate-400 mt-1">Este QR está vinculado mecánicamente a las coordenadas de este paradero.</p>
+                        </div>
+
+                        <div class="flex justify-between items-center text-[11px] text-slate-500 font-mono">
+                            <span>Coordenadas de Referencia:</span>
+                            <span id="mobile-gps-display" class="bg-slate-900 px-2 py-0.5 rounded border border-slate-800 text-slate-300">-9.07251, -78.59124</span>
+                        </div>
+                    </div>
+
+                    <!-- Botón de Envío de Alerta e IoT Trigger -->
+                    <div class="space-y-3">
+                        <button id="btn-trigger-alarm" onclick="enviarAlertaYActivarSirenaPoste()" class="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-black py-4.5 px-6 rounded-2xl shadow-xl shadow-red-950/20 text-sm transition-all transform active:scale-95 flex items-center justify-center space-x-3">
+                            <i data-lucide="bell-ring" class="w-5 h-5 animate-pulse"></i>
+                            <span>ACTIVAR SIRENA DEL POSTE Y LLAMAR</span>
+                        </button>
+                        <p class="text-[10px] text-slate-500 text-center leading-relaxed">
+                            Al presionar, se transmite la telemetría en tiempo real por el Broker en la nube, **activando inmediatamente la sirena física instalada en el poste** y abriendo el discador de Serenazgo.
+                        </p>
+                    </div>
+
+                    <!-- Interfaz simulada de llamada para dar realismo -->
+                    <div id="simulated-call-box" class="hidden bg-slate-950 border border-slate-800 rounded-2xl p-4 text-center space-y-3">
+                        <div class="text-[11px] text-red-400 font-bold uppercase tracking-widest flex items-center justify-center gap-1.5">
+                            <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+                            Llamando a Serenazgo Chimbote...
+                        </div>
+                        <p class="text-sm font-extrabold text-white">(043) 353131</p>
+                        <p class="text-[10px] text-slate-400">Canal de seguridad prioritario municipal</p>
+                        <div class="flex justify-center">
+                            <button onclick="cancelarLlamadaSimulada()" class="bg-slate-800 hover:bg-slate-700 text-white rounded-full p-2.5 transition">
+                                <i data-lucide="phone-off" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button onclick="irAPanelControl()" class="w-full text-xs text-slate-500 hover:text-slate-300 underline mt-4 text-center block">
+                        Volver al Panel de Control (Vista de Laptop)
+                    </button>
+                </div>
+            </div>
+
+            <!-- VISTA DESKTOP (VISTA DE CONTROL DE HARDWARE Y DESPACHO DE SERENAZGO C2) -->
+            <div id="view-desktop" class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
+                
+                <!-- CONFIGURADOR Y GENERADOR DE QR -->
+                <section class="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col justify-between relative overflow-hidden">
+                    <div class="absolute top-0 right-0 bg-blue-600/10 text-blue-400 px-3 py-1 text-xs font-bold border-b border-l border-slate-800 rounded-bl-xl">
+                        1. ESCANEAR QR
+                    </div>
+
+                    <div class="space-y-6">
+                        <div>
+                            <h3 class="text-base font-bold text-white mb-1 flex items-center gap-2">
+                                <i data-lucide="qr-code" class="text-blue-400"></i>
+                                <span>Placa de Poste Inteligente</span>
+                            </h3>
+                            <p class="text-[11px] text-slate-400">Selecciona el poste que quieres simular para generar su código QR físico real. Escanéalo con tu celular para vincularlo.</p>
+                        </div>
+
+                        <!-- Selector de poste -->
+                        <div class="bg-slate-950 p-3 rounded-xl border border-slate-850 space-y-1.5">
+                            <label class="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">ID de Poste Urbano:</label>
+                            <select id="desktop-pole-selector" onchange="generateQRCode()" class="w-full bg-slate-900 border border-slate-800 text-slate-200 text-xs rounded-xl p-2.5 font-semibold focus:border-blue-500 focus:outline-none">
+                                <option value="Poste 042 - Av. Meiggs / Av. Pardo">Poste 042 - Av. Meiggs / Av. Pardo</option>
+                                <option value="Poste 115 - Av. Pardo (Frente a Megaplaza)">Poste 115 - Av. Pardo (Megaplaza)</option>
+                                <option value="Poste 089 - Av. Meiggs (Mercado Chacra)">Poste 089 - Av. Meiggs (Mercado)</option>
+                                <option value="Poste 204 - Óvalo de las Banderas">Poste 204 - Óvalo de las Banderas</option>
+                                <option value="Poste 012 - Terminal Terrestre El Chimbador">Poste 012 - Terminal Terrestre</option>
+                            </select>
+                        </div>
+
+                        <!-- Código QR heráldico en placa de metal -->
+                        <div class="flex justify-center py-2">
+                            <div class="relative bg-slate-950 border-4 border-slate-700 rounded-2xl p-5 shadow-xl text-center max-w-[210px] w-full flex flex-col items-center">
+                                <!-- Tornillos simulados -->
+                                <div class="absolute top-1.5 left-1.5 w-2 h-2 bg-slate-500 rounded-full"></div>
+                                <div class="absolute top-1.5 right-1.5 w-2 h-2 bg-slate-500 rounded-full"></div>
+                                <div class="absolute bottom-1.5 left-1.5 w-2 h-2 bg-slate-500 rounded-full"></div>
+                                <div class="absolute bottom-1.5 right-1.5 w-2 h-2 bg-slate-500 rounded-full"></div>
+
+                                <!-- QR -->
+                                <div class="w-full flex justify-center mb-3 relative p-1 bg-white rounded-xl shadow-lg border border-blue-500">
+                                    <div id="dynamic-qr-container"></div>
+                                </div>
+                                
+                                <h4 id="plate-pole-id" class="text-[10px] font-black text-white tracking-wider truncate max-w-full">POSTE 042</h4>
+                                <p class="text-[8px] text-blue-400 font-bold tracking-widest uppercase">ESCANEÉ E INICIE</p>
+                            </div>
+                        </div>
+
+                        <!-- Resumen del flujo IoT -->
+                        <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-850 text-[11px] text-slate-400 space-y-1.5">
+                            <div class="flex items-center space-x-1 text-blue-400 font-bold">
+                                <i data-lucide="workflow" class="w-3.5 h-3.5"></i>
+                                <span>Bucle de Retroalimentación IoT</span>
+                            </div>
+                            <p class="leading-relaxed">
+                                Al escanear el QR, tu teléfono le dice al servidor: <strong class="text-white">"Estoy en el Poste 042"</strong>. Al presionar el botón en el celular, el servidor le envía una orden inmediata por Wi-Fi/4G al microcontrolador físico del poste para encender su sirena.
+                            </p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- SIMULACIÓN DE HARDWARE FÍSICO EN EL POSTE -->
+                <section class="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col justify-between relative overflow-hidden">
+                    <div class="absolute top-0 right-0 bg-red-600/10 text-red-400 px-3 py-1 text-xs font-bold border-b border-l border-slate-800 rounded-bl-xl">
+                        2. MONITOR DE POSTE IoT
+                    </div>
+
+                    <div class="space-y-6 flex-grow flex flex-col justify-between">
+                        <div>
+                            <h3 class="text-base font-bold text-white mb-1 flex items-center gap-2">
+                                <i data-lucide="utility-pole" class="text-red-400"></i>
+                                <span>Hardware en Paradero</span>
+                            </h3>
+                            <p class="text-[11px] text-slate-400">Representación física de la sirena de alta potencia de 12V y luces de disuasión.</p>
+                        </div>
+
+                        <!-- Representación Gráfica del Poste de Alumbrado -->
+                        <div class="bg-slate-950 border border-slate-850 rounded-2xl p-6 flex flex-col items-center justify-center space-y-4 relative my-4 flex-grow min-h-[220px]">
+                            
+                            <!-- Sirena e Iluminación en el poste -->
+                            <div class="flex flex-col items-center">
+                                <!-- Faro de Alumbrado y Sirenas -->
+                                <div class="w-16 h-8 bg-slate-800 rounded-b-xl relative flex items-center justify-between px-2 border border-slate-700">
+                                    <!-- Estrobo Izquierdo (Rojo) -->
+                                    <div id="strobe-left" class="w-4 h-4 bg-red-600 rounded opacity-20"></div>
+                                    <!-- Bocina de Sirena -->
+                                    <div class="w-4 h-5 bg-slate-900 rounded border border-slate-700 flex items-center justify-center">
+                                        <span class="text-[6px] text-slate-400">📢</span>
+                                    </div>
+                                    <!-- Estrobo Derecho (Azul) -->
+                                    <div id="strobe-right" class="w-4 h-4 bg-blue-600 rounded opacity-20"></div>
+                                </div>
+                                
+                                <!-- Estructura del Poste -->
+                                <div class="w-3 h-28 bg-gradient-to-r from-slate-700 to-slate-800 border-x border-slate-600 relative">
+                                    <!-- Placa de Control Interno ESP32 -->
+                                    <div class="absolute top-6 -left-3.5 w-10 h-14 bg-slate-900 border border-slate-700 rounded p-1 flex flex-col items-center justify-between shadow-lg">
+                                        <div class="w-2 h-2 bg-emerald-500 rounded-full animate-ping" id="esp-led"></div>
+                                        <span class="text-[6px] text-slate-400 font-mono">ESP32</span>
+                                        <span class="text-[5px] text-emerald-400 font-mono font-bold">WI-FI</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Estado del Hardware en tiempo real -->
+                            <div class="text-center space-y-1">
+                                <h4 class="text-xs font-bold text-white">Dispositivo: <span id="current-hardware-pole" class="text-blue-400">Poste 042</span></h4>
+                                <p id="hardware-state-label" class="text-[10px] text-slate-400">Conectado. Esperando señal del Broker...</p>
+                            </div>
+                        </div>
+
+                        <!-- Botón para silenciar la sirena localmente -->
+                        <button onclick="detenerSirenaLocal()" class="w-full bg-slate-950 hover:bg-slate-850 border border-slate-800 text-[11px] text-slate-300 py-2.5 rounded-xl transition font-semibold flex items-center justify-center gap-1.5">
+                            <i data-lucide="volume-x" class="w-4 h-4"></i>
+                            <span>Silenciar Sirena / Resetear Relé</span>
+                        </button>
+                    </div>
+                </section>
+
+                <!-- CONSOLA DE DESPACHO C2 -->
+                <section class="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col justify-between relative overflow-hidden">
+                    <div class="absolute top-0 right-0 bg-emerald-600/10 text-emerald-400 px-3 py-1 text-xs font-bold border-b border-l border-slate-800 rounded-bl-xl">
+                        3. CENTRAL C2
+                    </div>
+
+                    <div class="space-y-6 flex-grow flex flex-col justify-between">
+                        <div>
+                            <h3 class="text-base font-bold text-white mb-1 flex items-center gap-2">
+                                <i data-lucide="monitor" class="text-emerald-400"></i>
+                                <span>Despacho de Serenazgo</span>
+                            </h3>
+                            <p class="text-[11px] text-slate-400">Panel de monitoreo del Serenazgo de Chimbote para control de patrullaje.</p>
+                        </div>
+
+                        <!-- Panel de Registro de Alertas Recibidas -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex-grow my-4 flex flex-col justify-between min-h-[220px]">
+                            <div class="flex items-center justify-between border-b border-slate-900 pb-1.5 mb-2">
+                                <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Historial de Emergencias</span>
+                                <span class="text-[9px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase animate-pulse">Escuchando</span>
+                            </div>
+
+                            <!-- Lista de Alertas -->
+                            <div id="desktop-alert-feed" class="space-y-2.5 overflow-y-auto max-h-[160px] flex-grow pr-1">
+                                <div id="empty-feed-placeholder" class="text-center py-10 text-slate-500 flex flex-col items-center justify-center">
+                                    <i data-lucide="shield-check" class="w-8 h-8 text-slate-600 mb-1"></i>
+                                    <p class="text-[11px] font-semibold">Chimbote Monitoreado</p>
+                                    <p class="text-[9px] text-slate-600 mt-0.5">Escanea el código QR de la izquierda o haz clic en "Simular Escaneo Directo" para realizar pruebas.</p>
+                                </div>
+                            </div>
+
+                            <div class="pt-2 border-t border-slate-900 flex justify-between items-center mt-2 text-[10px] text-slate-500">
+                                <span>Velocidad de despacho objetivo:</span>
+                                <span class="text-emerald-400 font-bold">&lt; 5 min</span>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-2">
+                            <button onclick="clearIncidentLogs()" class="flex-1 bg-slate-950 hover:bg-slate-850 border border-slate-800 text-[10px] text-slate-400 py-2.5 rounded-xl transition font-semibold">
+                                Limpiar Historial
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        </div>
+
+        <!-- SECCIÓN 2: CÓDIGO FUENTE DE HARDWARE (ESP32 / ARDUINO) -->
+        <div id="section-codigo" class="hidden space-y-6">
+            <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-xl font-extrabold text-white flex items-center gap-2">
+                            <i data-lucide="terminal" class="text-emerald-400"></i>
+                            <span>Código de Firmware C++ para el Poste (ESP32)</span>
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-1">Copia y pega este código dentro de la aplicación **Arduino IDE** para programar la placa física de tu prototipo.</p>
+                    </div>
+                    <button onclick="copiarAlPortapapeles('code-esp32')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition duration-200 flex items-center gap-1.5 self-start sm:self-auto">
+                        <i data-lucide="copy" class="w-4 h-4"></i>
+                        <span>Copiar Código C++</span>
+                    </button>
+                </div>
+
+                <div class="relative bg-slate-950 rounded-2xl border border-slate-850 p-4 overflow-x-auto">
+                    <pre class="text-[11px] font-mono text-emerald-400 leading-relaxed overflow-x-auto max-h-[450px]" id="code-esp32">
+/*
+ * =========================================================================
+ *              QR-ALERTA CHIMBOTE - FIRMWARE DEL POSTE INTELIGENTE (ESP32)
+ * =========================================================================
+ * Curso: Creatividad Empresarial (UTP Chimbote - 2026)
+ * Protocolo: MQTT sobre WiFi (Suscripción a base de datos del paradero)
+ * Componentes requeridos: ESP32 NodeMCU, Módulo Relé 5V, Sirena 12V, Fuente 12V.
+ */
+
+#include &lt;WiFi.h&gt;
+#include &lt;PubSubClient.h&gt; // Instalar desde el Gestor de Librerías
+
+// --- CONFIGURACIÓN DE RED ---
+const char* ssid = "TU_WIFI_SSID";          // Nombre de tu red WiFi
+const char* password = "TU_WIFI_PASSWORD";  // Clave de tu red WiFi
+
+// --- CONFIGURACIÓN DEL BROKER MQTT (GRATUITO Y PÚBLICO) ---
+const char* mqtt_server = "broker.hivemq.com";
+const int mqtt_port = 1883;
+// El tema debe coincidir exactamente con el canal de tu placa
+const char* topic_sirena = "utp/chimbote/alerta/poste042"; 
+
+// --- ASIGNACIÓN DE PINES FÍSICOS (GPIO) ---
+const int RELAY_PIN = 14;  // Pin D14 en ESP32 para controlar el relé de la Sirena
+const int LED_PIN = 2;     // Luz LED integrada para pruebas rápidas de conexión
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Configurar Pines
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW); // Mantener sirena apagada al inicio
+  digitalWrite(LED_PIN, LOW);
+
+  // Inicializar WiFi y MQTT
+  setup_wifi();
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
+}
+
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Conectando a ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    // Parpadeo rápido mientras busca conexión
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+  }
+
+  Serial.println("");
+  Serial.println("WiFi conectado exitosamente!");
+  Serial.print("Dirección IP asignada: ");
+  Serial.println(WiFi.localIP());
+  digitalWrite(LED_PIN, HIGH); // LED fijo = WiFi OK
+}
+
+// Escuchador de Mensajes en tiempo real
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Mensaje recibido en el tema: [");
+  Serial.print(topic);
+  Serial.print("] ");
+
+  String messageTemp;
+  for (int i = 0; i < length; i++) {
+    messageTemp += (char)payload[i];
+  }
+  Serial.println(messageTemp);
+
+  // Evaluar orden de activación
+  if (messageTemp == "ACTIVAR" || messageTemp == "ON") {
+    Serial.println("📢 ORDEN RECIBIDA: ¡ACTIVANDO SIRENA Y ESTROBOS EN EL POSTE!");
+    digitalWrite(RELAY_PIN, HIGH); // Cierra el relé (Suena la sirena de 12V)
+    
+    // Simular un tiempo de apagado automático de seguridad tras 20 segundos
+    delay(20000); 
+    
+    Serial.println("📢 TIEMPO LÍMITE: Apagando sirena para evitar saturación de ruido.");
+    digitalWrite(RELAY_PIN, LOW);  // Abre el relé (Se silencia la sirena)
+  } 
+  else if (messageTemp == "SILENCIAR" || messageTemp == "OFF") {
+    Serial.println("📢 ORDEN RECIBIDA: Silenciando sirena de forma remota.");
+    digitalWrite(RELAY_PIN, LOW);
+  }
+}
+
+void reconnect() {
+  // Bucle de reconexión automática MQTT
+  while (!client.connected()) {
+    Serial.print("Intentando conectar al Broker MQTT...");
+    // Generar un ID único para evitar colisiones
+    String clientId = "ESP32_Chimbote_Poste_";
+    clientId += String(random(0xffff), HEX);
+    
+    if (client.connect(clientId.c_str())) {
+      Serial.println("Conectado exitosamente al Broker!");
+      // Volver a suscribirse al canal
+      client.subscribe(topic_sirena);
+    } else {
+      Serial.print("Error de conexión, rc=");
+      Serial.print(client.state());
+      Serial.println(" Reintentando en 5 segundos...");
+      delay(5000);
+    }
+  }
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop(); // Mantiene el hilo de escucha activo
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECCIÓN 3: DIAGRAMA DE CABLEADO Y CONEXIÓN ELÉCTRICA -->
+        <div id="section-esquema" class="hidden space-y-6">
+            <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div>
+                    <h2 class="text-xl font-extrabold text-white flex items-center gap-2">
+                        <i data-lucide="circuit-board" class="text-blue-400"></i>
+                        <span>Diagrama de Conexiones de Hardware</span>
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">Sigue esta guía paso a paso para cablear los componentes físicos que integran la sirena en el poste.</p>
+                </div>
+
+                <!-- Representación visual esquemática de conexiones -->
+                <div class="bg-slate-950 p-6 rounded-2xl border border-slate-850 flex flex-col lg:flex-row justify-around items-center gap-8 py-10">
+                    
+                    <!-- ESP32 -->
+                    <div class="bg-slate-900 border-2 border-blue-500/40 p-4 rounded-xl w-48 text-center shadow-lg">
+                        <div class="w-12 h-6 bg-slate-800 mx-auto rounded-t border border-slate-700 mb-2 flex items-center justify-center text-[8px] font-mono text-slate-500">USB (5V)</div>
+                        <h4 class="font-extrabold text-white text-xs">ESP32 NodeMCU</h4>
+                        <p class="text-[9px] text-blue-400 font-mono mt-1">Cerebro de control</p>
+                        <div class="mt-4 space-y-2 text-left text-[10px] font-mono">
+                            <div class="flex justify-between border-b border-slate-800 pb-1">
+                                <span class="text-slate-400">GND</span>
+                                <span class="text-yellow-500">──► GND</span>
+                            </div>
+                            <div class="flex justify-between border-b border-slate-800 pb-1">
+                                <span class="text-slate-400">VIN (5V)</span>
+                                <span class="text-red-500">──► VCC</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-slate-400">GPIO 14</span>
+                                <span class="text-emerald-500">──► IN (Señal)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- RELE -->
+                    <div class="bg-slate-900 border-2 border-emerald-500/40 p-4 rounded-xl w-48 text-center shadow-lg relative">
+                        <div class="absolute -left-4 top-1/2 transform -translate-y-1/2 text-emerald-400 text-lg">➔</div>
+                        <h4 class="font-extrabold text-white text-xs">Módulo Relé (5V)</h4>
+                        <p class="text-[9px] text-emerald-400 font-mono mt-1">Interruptor Electrónico</p>
+                        <div class="mt-4 space-y-2 text-left text-[10px] font-mono">
+                            <div class="border-b border-slate-800 pb-1 text-center text-[8px] text-slate-500">BORNERA DE SALIDA</div>
+                            <div class="flex justify-between border-b border-slate-800 pb-1">
+                                <span class="text-slate-400">COM (Común)</span>
+                                <span class="text-red-400">──► Positivo 12V</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-slate-400">N.O. (Normal)</span>
+                                <span class="text-orange-400">──► Sirena (+)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SIRENA Y FUENTE -->
+                    <div class="bg-slate-900 border-2 border-red-500/40 p-4 rounded-xl w-48 text-center shadow-lg relative">
+                        <div class="absolute -left-4 top-1/2 transform -translate-y-1/2 text-red-400 text-lg">➔</div>
+                        <h4 class="font-extrabold text-white text-xs">Bocina / Sirena 12V</h4>
+                        <p class="text-[9px] text-red-400 font-mono mt-1">Alarma de Alta Potencia</p>
+                        <div class="mt-4 space-y-2 text-[10px] text-left">
+                            <div class="bg-slate-950 p-2 rounded text-[9px] leading-tight text-slate-400">
+                                <strong>Nota Eléctrica:</strong> Alimenta la bocina usando una fuente externa de **12 Voltios / 2 Amperios**. No conectes la sirena directamente al ESP32 o lo quemarás.
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Lista escrita de materiales y precios estimados para Chimbote -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-slate-950 p-4 rounded-2xl border border-slate-850 space-y-2.5">
+                        <h4 class="font-bold text-white text-sm flex items-center gap-1.5 text-blue-400">
+                            <i data-lucide="shopping-bag" class="w-4 h-4"></i>
+                            <span>Lista de Componentes (Adquiribles en Chimbote)</span>
+                        </h4>
+                        <ul class="text-xs text-slate-400 space-y-1.5 leading-relaxed">
+                            <li>• <strong>ESP32 DevKit V1:</strong> Microcontrolador con Wi-Fi incorporado (Aprox. S/. 25 - S/. 30).</li>
+                            <li>• <strong>Módulo Relé de 1 Canal (5V):</strong> Permite aislar y conmutar la carga de alto voltaje (Aprox. S/. 8).</li>
+                            <li>• <strong>Sirena de alta potencia de 12V:</strong> Sirena tipo corneta de dos tonos de alarma (Aprox. S/. 15 - S/. 20).</li>
+                            <li>• <strong>Adaptador de Corriente de 12V / 2A:</strong> Para alimentar de forma externa la sirena (Aprox. S/. 15).</li>
+                        </ul>
+                    </div>
+
+                    <div class="bg-slate-950 p-4 rounded-2xl border border-slate-850 space-y-2.5">
+                        <h4 class="font-bold text-white text-sm flex items-center gap-1.5 text-emerald-400">
+                            <i data-lucide="shield-check" class="w-4 h-4"></i>
+                            <span>Seguridad y Consideraciones Críticas</span>
+                        </h4>
+                        <p class="text-xs text-slate-400 leading-relaxed">
+                            El uso del módulo relé es obligatorio. Este componente actúa como un interruptor magnético aislado. Protege los delicados circuitos integrados de la placa de control **ESP32 (que operan a un máximo de 3.3V)** de la descarga de retorno de la bobina de la bocina de alta potencia de 12V.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECCIÓN 4: GUÍA DE DESPLIEGUE WEB (CÓMO SUBIR TU WEB A INTERNET GRATIS) -->
+        <div id="section-despliegue" class="hidden space-y-6">
+            <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div>
+                    <h2 class="text-xl font-extrabold text-white flex items-center gap-2">
+                        <i data-lucide="globe" class="text-blue-400"></i>
+                        <span>Guía de Publicación en la Nube</span>
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">Sigue estos sencillos pasos para que el código QR pueda ser escaneado por cualquier teléfono inteligente en la calle.</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    
+                    <!-- Paso 1 -->
+                    <div class="bg-slate-950 p-5 rounded-2xl border border-slate-850 space-y-3">
+                        <div class="w-8 h-8 rounded-full bg-blue-600/20 text-blue-400 font-black flex items-center justify-center">1</div>
+                        <h4 class="font-bold text-white text-sm">Guardar tu código</h4>
+                        <p class="text-xs text-slate-400 leading-relaxed">
+                            Guarda el archivo completo que ves a la derecha con el nombre exacto de <strong class="text-white">index.html</strong> en una carpeta de tu computadora.
+                        </p>
+                    </div>
+
+                    <!-- Paso 2 -->
+                    <div class="bg-slate-950 p-5 rounded-2xl border border-slate-850 space-y-3">
+                        <div class="w-8 h-8 rounded-full bg-blue-600/20 text-blue-400 font-black flex items-center justify-center">2</div>
+                        <h4 class="font-bold text-white text-sm">Crear Repositorio en GitHub</h4>
+                        <p class="text-xs text-slate-400 leading-relaxed">
+                            Crea una cuenta gratuita en **GitHub.com**, crea un nuevo repositorio público y sube tu archivo <strong class="text-white">index.html</strong> directamente mediante la web.
+                        </p>
+                    </div>
+
+                    <!-- Paso 3 -->
+                    <div class="bg-slate-950 p-5 rounded-2xl border border-slate-850 space-y-3">
+                        <div class="w-8 h-8 rounded-full bg-blue-600/20 text-blue-400 font-black flex items-center justify-center">3</div>
+                        <h4 class="font-bold text-white text-sm">Activar GitHub Pages</h4>
+                        <p class="text-xs text-slate-400 leading-relaxed">
+                            Ingresa a la sección de **Settings (Configuraciones)** de tu repositorio, ve a la pestaña **Pages** y actívala. En un par de minutos tendrás un enlace web seguro (HTTPS) listo para imprimir en tu código QR.
+                        </p>
+                    </div>
+
+                </div>
+
+                <div class="bg-blue-600/10 border border-blue-500/25 p-4 rounded-2xl text-xs text-slate-300 leading-relaxed flex items-start gap-3">
+                    <i data-lucide="info" class="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5"></i>
+                    <div>
+                        <strong class="text-white">¿Por qué es necesario HTTPS?</strong> Las cámaras de los smartphones modernos requieren obligatoriamente de un protocolo seguro de transferencia cifrada para que el código QR active los marcadores telefónicos nativos de auxilio de manera directa. GitHub Pages provee esto por defecto de manera automática.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="bg-slate-950 border-t border-slate-900 py-5 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p>Ecosistema de Seguridad Pasiva-Activa con activación IoT. Basado en la investigación académica "QR_ALERTA_CHIMBOTE_AP2.pdf".</p>
+            <p>© 2026 UTP - Creatividad Empresarial. Todos los derechos reservados.</p>
+        </div>
+    </footer>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Identificador del proyecto
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'silent-qr-alerta';
+        let db = null;
+        let auth = null;
+
+        // Servidor MQTT público para sincronizar con la placa física
+        let mqttClient = null;
+
+        // Lista de coordenadas y postes precargados
+        const coordenadasPostes = {
+            "Poste 042 - Av. Meiggs / Av. Pardo": "-9.07251, -78.59124",
+            "Poste 115 - Av. Pardo (Frente a Megaplaza)": "-9.08312, -78.58102",
+            "Poste 089 - Av. Meiggs (Mercado Chacra)": "-9.06105, -78.60155",
+            "Poste 204 - Óvalo de las Banderas": "-9.09110, -78.57211",
+            "Poste 012 - Terminal Terrestre El Chimbador": "-9.05512, -78.61432"
+        };
+
+        // Fallback de configuración segura para Firebase
+        let firebaseConfig;
+        try {
+            firebaseConfig = JSON.parse(__firebase_config);
+        } catch (e) {
+            firebaseConfig = {
+                apiKey: "demo-api-key",
+                authDomain: "demo.firebaseapp.com",
+                projectId: "demo-project",
+                storageBucket: "demo.appspot.com",
+                messagingSenderId: "123456",
+                appId: "123456"
+            };
+        }
+
+        // BroadcastChannel para sincronizar ventanas locales rápidamente
+        const localBroker = new BroadcastChannel('qr_alerta_iot_broker');
+
+        // Web Audio API para simular la bocina física del paradero
+        let audioCtx = null;
+        let osc1 = null;
+        let sweepEnv = null;
+        let gainNode = null;
+        let isSirenaActiva = false;
+
+        function iniciarSirenaAcustica() {
+            if (isSirenaActiva) return;
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+
+                osc1 = audioCtx.createOscillator();
+                osc1.type = 'sawtooth';
+                osc1.frequency.setValueAtTime(650, audioCtx.currentTime);
+
+                sweepEnv = audioCtx.createOscillator();
+                sweepEnv.type = 'sine';
+                sweepEnv.frequency.value = 2.0; // Oscilaciones de subida y bajada por segundo
+
+                const sweepGain = audioCtx.createGain();
+                sweepGain.gain.value = 250; // Fuerza del cambio de frecuencia
+
+                gainNode = audioCtx.createGain();
+                gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime); // Volumen de protección
+
+                sweepEnv.connect(sweepGain);
+                sweepGain.connect(osc1.frequency);
+                osc1.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+
+                sweepEnv.start();
+                osc1.start();
+                isSirenaActiva = true;
+
+            } catch (err) {
+                console.warn("La API de Audio no se pudo iniciar automáticamente", err);
+            }
+        }
+
+        function detenerSirenaAcustica() {
+            if (isSirenaActiva) {
+                try {
+                    osc1.stop();
+                    sweepEnv.stop();
+                    audioCtx.close();
+                } catch (e) {}
+                isSirenaActiva = false;
+                audioCtx = null;
+            }
+        }
+
+        // Inicializar Firebase
+        try {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+        } catch (e) {
+            console.warn("Firestore operando en modo simulación local", e);
+        }
+
+        // Inicializar conexión MQTT en vivo para activar placas reales
+        function initMQTT() {
+            try {
+                // Conectar al broker público gratuito a través de WebSockets protegidos
+                mqttClient = mqtt.connect('wss://broker.hivemq.com:8000/mqtt');
+                
+                mqttClient.on('connect', () => {
+                    console.log("Conectado exitosamente al servidor MQTT Real-time para placas físicas!");
+                    updateCloudBadge(true, "Ecosistema IoT Activo");
+                });
+
+                mqttClient.on('error', (err) => {
+                    console.warn("Error de conexión MQTT, operando por Firebase/Local", err);
+                });
+            } catch (e) {
+                console.warn("Librería MQTT no disponible, operando localmente", e);
+            }
+        }
+
+        // Autenticación anónima y suscripción de alertas
+        async function initAuth() {
+            initMQTT();
+            if (!auth) {
+                updateCloudBadge(false, "Simulador Local Activo");
+                return;
+            }
+            try {
+                await signInAnonymously(auth);
+                listenForAlerts();
+            } catch (err) {
+                console.warn("Fallo de autenticación en la nube", err);
+                updateCloudBadge(false, "Broker Local Activo");
+            }
+        }
+
+        function updateCloudBadge(active, text) {
+            const badge = document.getElementById('cloud-status');
+            const badgeText = document.getElementById('cloud-status-text');
+            if (badgeText) badgeText.innerText = text;
+            
+            if (active) {
+                badge.className = "flex items-center space-x-2 bg-slate-950 px-4 py-2 rounded-xl border border-emerald-500/30 text-xs";
+            } else {
+                badge.className = "flex items-center space-x-2 bg-slate-950 px-4 py-2 rounded-xl border border-yellow-500/20 text-xs";
+            }
+        }
+
+        // Control de vistas según los parámetros de la URL
+        window.addEventListener('DOMContentLoaded', async () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const isMobile = urlParams.get('view') === 'mobile';
+
+            if (isMobile) {
+                // Vista Móvil (Testigo de emergencia)
+                document.getElementById('view-desktop').classList.add('hidden');
+                document.getElementById('view-mobile').classList.remove('hidden');
+                
+                const targetPole = urlParams.get('pole') || "Poste 042 - Av. Meiggs / Av. Pardo";
+                const displayPole = document.getElementById('mobile-detected-pole');
+                const displayGps = document.getElementById('mobile-gps-display');
+                
+                if (displayPole && displayGps) {
+                    displayPole.innerText = targetPole;
+                    displayGps.innerText = coordenadasPostes[targetPole] || "-9.07251, -78.59124";
+                }
+                
+                await initAuth();
+            } else {
+                // Vista de Consola de Control de Hardware
+                document.getElementById('view-mobile').classList.add('hidden');
+                document.getElementById('view-desktop').classList.remove('hidden');
+                generateQRCode();
+                await initAuth();
+            }
+            lucide.createIcons();
+        });
+
+        // Generación dinámica de QR con metadatos del poste para autodetección
+        window.generateQRCode = function() {
+            const selector = document.getElementById('desktop-pole-selector');
+            const selectedPole = selector.value;
+            
+            // Actualiza el indicador visual del microcontrolador local en pantalla
+            const platePoleId = document.getElementById('plate-pole-id');
+            const hardwarePoleLabel = document.getElementById('current-hardware-pole');
+            
+            if (platePoleId) platePoleId.innerText = selectedPole.split(' - ')[0].toUpperCase();
+            if (hardwarePoleLabel) hardwarePoleLabel.innerText = selectedPole.split(' - ')[0].toUpperCase();
+
+            // Codifica el estado en la URL de destino del QR
+            const mobileUrl = `${window.location.origin}${window.location.pathname}?view=mobile&pole=${encodeURIComponent(selectedPole)}`;
+            const container = document.getElementById('dynamic-qr-container');
+            container.innerHTML = "";
+
+            new QRCode(container, {
+                text: mobileUrl,
+                width: 140,
+                height: 140,
+                colorDark: "#0b0f19",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            });
+        }
+
+        // Envía reporte telemétrico (Gatilla evento en base de datos e inicia discado en celular)
+        window.enviarAlertaYActivarSirenaPoste = async function() {
+            const posteId = document.getElementById('mobile-detected-pole').innerText;
+            const coords = coordenadasPostes[posteId] || "-9.07251, -78.59124";
+
+            const alertData = {
+                posteId: posteId,
+                timestamp: Date.now(),
+                coords: coords,
+                type: 'Activación de Alarma de Poste vía QR'
+            };
+
+            // Mostrar el simulador de llamada de voz
+            document.getElementById('simulated-call-box').classList.remove('hidden');
+
+            // --- ENVÍO DE ORDEN EN TIEMPO REAL AL POSTE FÍSICO REAL (MQTT) ---
+            if (mqttClient && mqttClient.connected) {
+                // Publicar orden en el broker público. La placa física conectada en cualquier parte de Chimbote recibirá esta señal de inmediato.
+                mqttClient.publish('utp/chimbote/alerta/poste042', 'ACTIVAR');
+                console.log("Señal de activación en tiempo real emitida vía canal físico MQTT!");
+            }
+
+            try {
+                // Transmitir señal en tiempo real por el canal en la nube
+                if (db && auth.currentUser && auth.currentUser.uid && firebaseConfig.apiKey !== "demo-api-key") {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'alerts'), alertData);
+                } else {
+                    // Si no está conectado a Firebase real, emitir localmente vía BroadcastChannel
+                    localBroker.postMessage(alertData);
+                    triggerLocalAlert(alertData);
+                }
+            } catch (err) {
+                // Fallback local inmediato ante errores de red
+                localBroker.postMessage(alertData);
+                triggerLocalAlert(alertData);
+            }
+
+            // Intento de disparo telefónico real (Protocolo nativo "tel:")
+            setTimeout(() => {
+                window.location.href = "tel:043353131";
+            }, 1200);
+        }
+
+        window.cancelarLlamadaSimulada = function() {
+            document.getElementById('simulated-call-box').classList.add('hidden');
+        }
+
+        // Escucha de alertas en tiempo real (Base de Datos en la Nube)
+        function listenForAlerts() {
+            if (!db) return;
+            const q = query(
+                collection(db, 'artifacts', appId, 'public', 'data', 'alerts'),
+                orderBy('timestamp', 'desc'),
+                limit(10)
+            );
+
+            onSnapshot(q, (snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    if (change.type === "added") {
+                        const data = change.doc.data();
+                        triggerLocalAlert(data);
+                    }
+                });
+            }, (error) => {
+                console.warn("Broker en la nube desconectado, operando en red local", error);
+            });
+        }
+
+        // Escuchar el Broker de Red Local (Pestañas del mismo navegador abiertas simultáneamente)
+        localBroker.onmessage = function (event) {
+            triggerLocalAlert(event.data);
+        };
+
+        // Registro de incidencia y disparo físico del hardware del Poste
+        function triggerLocalAlert(data) {
+            // 1. Validar si la alerta corresponde al poste que tenemos configurado en pantalla para activar su sirena
+            const currentSelected = document.getElementById('desktop-pole-selector').value;
+            
+            if (data.posteId === currentSelected) {
+                // Activar animación estroboscópica visual en el poste
+                const strobeL = document.getElementById('strobe-left');
+                const strobeR = document.getElementById('strobe-right');
+                const espLed = document.getElementById('esp-led');
+                const stateLabel = document.getElementById('hardware-state-label');
+
+                if (strobeL && strobeR) {
+                    strobeL.className = "w-4 h-4 bg-red-600 rounded animate-strobe-red";
+                    strobeR.className = "w-4 h-4 bg-blue-600 rounded animate-strobe-blue";
+                }
+                if (espLed) {
+                    espLed.className = "w-2 h-2 bg-red-500 rounded-full animate-ping";
+                }
+                if (stateLabel) {
+                    stateLabel.innerHTML = `<span class="text-red-500 font-extrabold uppercase animate-pulse">📢 Sirena Local Activa</span>`;
+                }
+
+                // Encender bocina del oscilador de audio de la computadora para simular la sirena de 12V
+                iniciarSirenaAcustica();
+            }
+
+            // 2. Registrar el reporte telemétrico en la Consola C2 de Serenazgo
+            const feed = document.getElementById('desktop-alert-feed');
+            const placeholder = document.getElementById('empty-feed-placeholder');
+            if (placeholder) placeholder.remove();
+
+            const timeStr = new Date(data.timestamp).toTimeString().split(' ')[0];
+            const log = document.createElement('div');
+            log.className = "bg-slate-900 border border-red-500/30 p-3 rounded-xl text-left space-y-1.5 transition duration-500 hover:border-red-500/60";
+            
+            log.innerHTML = `
+                <div class="flex justify-between items-center text-[11px]">
+                    <span class="font-extrabold text-red-500 flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
+                        ${data.posteId}
+                    </span>
+                    <span class="font-mono text-slate-500">${timeStr}</span>
+                </div>
+                <p class="text-[10px] text-slate-300">Coordenadas de despacho: <strong class="text-slate-100">${data.coords}</strong></p>
+                <div class="flex justify-between items-center text-[9px] pt-1.5 border-t border-slate-800">
+                    <span class="text-slate-400">Canal: IoT Relé de Poste</span>
+                    <span class="bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">Sirena Disparada</span>
+                </div>
+            `;
+            feed.prepend(log);
+            lucide.createIcons();
+        }
+
+        // Apagar la sirena y reiniciar el relé
+        window.detenerSirenaLocal = function() {
+            detenerSirenaAcustica();
+
+            if (mqttClient && mqttClient.connected) {
+                // Enviar comando para silenciar el microchip real de inmediato
+                mqttClient.publish('utp/chimbote/alerta/poste042', 'SILENCIAR');
+            }
+
+            const strobeL = document.getElementById('strobe-left');
+            const strobeR = document.getElementById('strobe-right');
+            const espLed = document.getElementById('esp-led');
+            const stateLabel = document.getElementById('hardware-state-label');
+
+            if (strobeL && strobeR) {
+                strobeL.className = "w-4 h-4 bg-red-600 rounded opacity-20";
+                strobeR.className = "w-4 h-4 bg-blue-600 rounded opacity-20";
+            }
+            if (espLed) {
+                espLed.className = "w-2 h-2 bg-emerald-500 rounded-full animate-ping";
+            }
+            if (stateLabel) {
+                stateLabel.innerText = "Conectado. Esperando señal del Broker...";
+            }
+        }
+
+        // Forzar vista móvil de forma local para pruebas en la misma computadora
+        window.simularFlujoLocal = function() {
+            const selector = document.getElementById('desktop-pole-selector');
+            const selectedPole = selector ? selector.value : "Poste 042 - Av. Meiggs / Av. Pardo";
+            window.open(`${window.location.origin}${window.location.pathname}?view=mobile&pole=${encodeURIComponent(selectedPole)}`, '_blank');
+        }
+
+        window.irAPanelControl = function() {
+            window.location.search = "";
+        }
+
+        window.clearIncidentLogs = function() {
+            const feed = document.getElementById('desktop-alert-feed');
+            feed.innerHTML = `
+                <div id="empty-feed-placeholder" class="text-center py-10 text-slate-500 flex flex-col items-center justify-center">
+                    <i data-lucide="shield-check" class="w-8 h-8 text-slate-600 mb-1"></i>
+                    <p class="text-[11px] font-semibold">Chimbote Monitoreado</p>
+                    <p class="text-[9px] text-slate-600 mt-0.5">Escanea el código QR de la izquierda o haz clic en "Simular Escaneo Directo" para realizar pruebas.</p>
+                </div>
+            `;
+            detenerSirenaLocal();
+            lucide.createIcons();
+        }
+
+        // --- SISTEMA DE PESTAÑAS ACADÉMICAS ---
+        window.cambiarPestana = function(pestanaId) {
+            // Secciones a controlar
+            const sections = {
+                simulador: document.getElementById('section-simulador'),
+                codigo: document.getElementById('section-codigo'),
+                esquema: document.getElementById('section-esquema'),
+                despliegue: document.getElementById('section-despliegue')
+            };
+
+            // Botones de pestañas
+            const tabs = {
+                simulador: document.getElementById('tab-simulador'),
+                codigo: document.getElementById('tab-codigo'),
+                esquema: document.getElementById('tab-esquema'),
+                despliegue: document.getElementById('tab-despliegue')
+            };
+
+            // Apagar y resetear todas las secciones
+            Object.keys(sections).forEach(key => {
+                if (sections[key]) {
+                    sections[key].classList.add('hidden');
+                }
+                if (tabs[key]) {
+                    tabs[key].className = "flex-1 min-w-[120px] text-xs font-bold py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50";
+                }
+            });
+
+            // Activar la pestaña elegida
+            if (sections[pestanaId]) {
+                sections[pestanaId].classList.remove('hidden');
+            }
+            if (tabs[pestanaId]) {
+                tabs[pestanaId].className = "flex-1 min-w-[120px] text-xs font-bold py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2 bg-blue-600 text-white shadow-md";
+            }
+        }
+
+        // Herramienta de copiado seguro compatible con sandboxes de navegadores
+        window.copiarAlPortapapeles = function(elementId) {
+            const preElement = document.getElementById(elementId);
+            if (!preElement) return;
+            
+            const tempTextArea = document.createElement("textarea");
+            tempTextArea.value = preElement.innerText;
+            document.body.appendChild(tempTextArea);
+            tempTextArea.select();
+            
+            try {
+                document.execCommand('copy');
+                // Alerta elegante simulada temporalmente sin usar alert()
+                const originalText = document.getElementById('tab-' + elementId.split('-')[1]).innerHTML;
+                const tabBtn = document.getElementById('tab-' + elementId.split('-')[1]);
+                tabBtn.innerHTML = "<span>¡Copiado con éxito!</span>";
+                setTimeout(() => {
+                    tabBtn.innerHTML = originalText;
+                }, 1500);
+            } catch (err) {
+                console.warn("No se pudo realizar el copiado automático", err);
+            }
+            
+            document.body.removeChild(tempTextArea);
+        }
+    </script>
+</body>
+</html>
